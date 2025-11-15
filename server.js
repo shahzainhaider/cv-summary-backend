@@ -6,9 +6,13 @@ const helmet = require('helmet');
 const userRoutes = require('./src/routes/user.routes');
 const cvBankRoutes = require('./src/routes/cvBank.routes');
 const serverConfig = require('./src/config/server.config');
+const connectDB = require('./src/config/database');
 
 // Initialize Express app
 const app = express();
+
+// Connect to MongoDB
+connectDB();
 
 // Middleware
 app.use(helmet()); // Security headers
@@ -30,7 +34,7 @@ app.get('/health', (req, res) => {
 app.use('/api/users', userRoutes);
 app.use('/api/cv-bank', cvBankRoutes);
 
-// 404 handlercvBankRoutes
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
