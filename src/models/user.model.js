@@ -42,9 +42,8 @@ const userSchema = new mongoose.Schema({
   timestamps: true, // Adds createdAt and updatedAt fields
 });
 
-// Index for faster queries
-userSchema.index({ email: 1 });
+// Note: email field already has unique: true which creates an index automatically
 
-const User = mongoose.model('User', userSchema);
+const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 module.exports = User;
