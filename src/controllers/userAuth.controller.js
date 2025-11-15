@@ -1,14 +1,8 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/user.model');
 const CustomError = require('../utils/customError');
+const { splitName } = require('../utils/helper');
 
-// Helper function to split name into firstName and lastName
-const splitName = (name) => {
-  const nameParts = name.trim().split(/\s+/);
-  const firstName = nameParts[0] || '';
-  const lastName = nameParts.slice(1).join(' ') || '';
-  return { firstName, lastName };
-};
 
 exports.signup = async (req, res, next) => {
   try {
@@ -35,22 +29,11 @@ exports.signup = async (req, res, next) => {
       password: hashedPassword,
     });
 
-    // Remove password from response
-    const userResponse = {
-      _id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-      isActive: user.isActive,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    };
+
 
     res.status(201).json({
       success: true,
       message: 'User created successfully',
-      data: userResponse,
     });
   } catch (error) {
     // Handle mongoose validation errors
