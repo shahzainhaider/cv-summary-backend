@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 
 const userRoutes = require('./src/routes/user.routes');
 const cvBankRoutes = require('./src/routes/cvBank.routes');
@@ -17,10 +18,14 @@ connectDB();
 
 // Middleware
 app.use(helmet()); // Security headers
-app.use(cors()); // Enable CORS
+app.use(cors({
+  origin: true,
+  credentials: true, // Allow cookies to be sent
+})); // Enable CORS
 app.use(morgan('dev')); // Logging
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+app.use(cookieParser()); // Parse cookies
 
 // Health check route
 app.get('/health', (req, res) => {
@@ -32,7 +37,7 @@ app.get('/health', (req, res) => {
 });
 
 // API routes
-app.use('/api/users', userRoutes);
+app.use('/api/user', userRoutes);
 app.use('/api/auth', userAuthRoutes);
 app.use('/api/cv-bank', cvBankRoutes);
 
