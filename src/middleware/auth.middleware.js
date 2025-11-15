@@ -9,6 +9,7 @@ const protectedRoute = async (req, res, next) => {
     const accessToken = req.cookies?.accessToken;
     const refreshToken = req.cookies?.refreshToken;
 
+
     if (!refreshToken) {
       throw new CustomError(401, "Unauthorized");
     }
