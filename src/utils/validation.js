@@ -30,6 +30,22 @@ const signupValidation = [
     .withMessage('Name can only contain letters and spaces'),
 ];
 
+// Login validation rules
+const loginValidation = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage('Please provide a valid email address')
+    .normalizeEmail(),
+  
+  body('password')
+    .trim()
+    .notEmpty()
+    .withMessage('Password is required'),
+];
+
 // Validation error handler middleware
 const validate = (req, res, next) => {
   const errors = validationResult(req);
@@ -48,5 +64,6 @@ const validate = (req, res, next) => {
 
 module.exports = {
   signupValidation,
+  loginValidation,
   validate,
 };

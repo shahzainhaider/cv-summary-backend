@@ -11,6 +11,8 @@ exports.generateJWT = (payload, res) => {
       throw new Error("JWT secrets are missing in configuration.");
     }
 
+    console.log(authConfig.accessSecret, authConfig.refreshSecret);
+
     const accessToken = jwt.sign(payload, authConfig.accessSecret, {
       expiresIn: accessExpiresIn,
     });

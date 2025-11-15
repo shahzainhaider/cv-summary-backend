@@ -5,6 +5,7 @@ const helmet = require('helmet');
 
 const userRoutes = require('./src/routes/user.routes');
 const cvBankRoutes = require('./src/routes/cvBank.routes');
+const userAuthRoutes = require('./src/routes/userAuth.routes');
 const serverConfig = require('./src/config/server.config');
 const connectDB = require('./src/config/database');
 
@@ -32,6 +33,7 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/users', userRoutes);
+app.use('/api/auth', userAuthRoutes);
 app.use('/api/cv-bank', cvBankRoutes);
 
 // 404 handler
@@ -42,15 +44,6 @@ app.use((req, res) => {
   });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Internal Server Error',
-    ...(serverConfig.nodeEnv === 'development' && { stack: err.stack })
-  });
-});
 
 // Start server
 app.listen(serverConfig.port, () => {
