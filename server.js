@@ -39,7 +39,7 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api/user', userRoutes);
 app.use('/api/auth', userAuthRoutes);
-app.use('/api/cv-bank', cvBankRoutes);
+app.use('/api/cvBank', cvBankRoutes);
 
 // 404 handler
 app.use((req, res) => {
