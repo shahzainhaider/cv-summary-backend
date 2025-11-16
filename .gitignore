@@ -41,3 +41,6 @@ coverage/
 # Uploads folder (user uploaded files)
 uploads/*
 !uploads/.gitkeep
+
+# Docker
+docker-compose.override.yml

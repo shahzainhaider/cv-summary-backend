@@ -3,6 +3,8 @@ const CustomError = require('../utils/customError');
 const path = require('path');
 const fs = require('fs');
 const errorHandler = require('../utils/errorHandler');
+const { extractText } = require('../utils/textExtractor');
+const { generateSummaryWithOllama } = require('../services/aiService');
 
 /**
  * Upload multiple CV files
@@ -60,11 +62,44 @@ exports.uploadCvs = async (req, res, next) => {
         continue;
       }
 
-      // Create new CV record
+      // Extract text and generate summary
+      let summary = '';
+      try {
+        // Extract text from CV file
+        const extractedText = await extractText(file.path, file.mimetype);
+        
+        if (extractedText && extractedText.trim().length > 50) {
+          // Generate summary using Ollama AI
+          console.log(`Generating summary for CV: ${file.originalname}`);
+          summary = await generateSummaryWithOllama(extractedText);
+          console.log(`Summary generated successfully for: ${file.originalname}`);
+        } else {
+          summary = 'Unable to extract sufficient text from CV for summary generation.';
+          console.warn(`Insufficient text extracted from: ${file.originalname}`);
+        }
+      } catch (summaryError) {
+        console.error(`Error generating summary for ${file.originalname}:`, summaryError);
+        
+        // Set appropriate error message based on error type
+        if (summaryError.status === 503) {
+          summary = 'Summary generation service unavailable. Please ensure Ollama is running.';
+        } else if (summaryError.status === 404) {
+          summary = `Summary generation model not found. Error: ${summaryError.message}`;
+        } else if (summaryError.message.includes('extract text')) {
+          summary = `Failed to extract text from file: ${summaryError.message}`;
+        } else {
+          summary = `Summary generation failed: ${summaryError.message}. You can retry later.`;
+        }
+        
+        // Continue with upload even if summary generation fails
+        // The CV will be saved without summary, which can be regenerated later
+      }
+
+      // Create new CV record with summary
       const cvRecord = await CVBank.create({
         userId: userId,
         path: fileUrl,
-        summary: '', // Empty for now
+        summary: summary,
         originalName: file.originalname,
         mimeType: file.mimetype,
         fileSize: file.size,
