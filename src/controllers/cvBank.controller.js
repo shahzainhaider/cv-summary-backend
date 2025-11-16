@@ -167,4 +167,24 @@ exports.deleteCV = async (req, res, next) => {
       filePath = filePath.substring(8); // Remove 'file:///'
     } else if (filePath.startsWith('file://')) {
       filePath = filePath.substring(7); // Remove 'file://'
- 
+    }
+    
+    // Normalize path separators for current OS
+    filePath = path.normalize(filePath);
+    
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    // Soft delete - set isActive to false
+    cv.isActive = false;
+    await cv.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'CV deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
