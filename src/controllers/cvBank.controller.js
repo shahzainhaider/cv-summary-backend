@@ -40,18 +40,12 @@ exports.uploadCvs = async (req, res, next) => {
 
     // Process each uploaded file
     for (const file of files) {
-      // file.path contains the full absolute path from multer
-      // Convert to file:// URL format (e.g., file:///E:/MY/cv-summary/backend/uploads/...)
       let fullPath = path.resolve(file.path); // Ensure absolute path
       
-      // Normalize Windows paths: convert backslashes to forward slashes
       fullPath = fullPath.replace(/\\/g, '/');
       
-      // Add file:// protocol (triple slash for absolute paths)
-      // On Windows, path starts with drive letter (E:/...), so it becomes file:///E:/...
       const fileUrl = `file:///${fullPath}`;
 
-      // Check if CV with same path already exists for this user
       const existingCV = await CVBank.findOne({
         userId: userId,
         path: fileUrl,
@@ -118,10 +112,6 @@ exports.uploadCvs = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: `${uploads.length} CV file(s) uploaded successfully`,
-      data: {
-        uploaded: uploads,
-        total: files.length,
-      },
     });
   } catch (error) {
     // Clean up uploaded files if database save fails
