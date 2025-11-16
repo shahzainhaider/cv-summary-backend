@@ -176,8 +176,6 @@ exports.deleteCV = async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user._id;
 
-    console.log(req.body);
-    console.log(req.params)
 
     const cv = await CVBank.findOne({ _id: id, userId: userId });
 
@@ -213,5 +211,112 @@ exports.deleteCV = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+/**
+ * Delete multiple CVs by IDs (bulk delete)
+ */
+exports.deleteBulkCVs = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user._id) {
+      throw new CustomError(401, 'User not authenticated');
+    }
+
+    const userId = req.user._id;
+    const { ids } = req.body;
+
+    // Validate input
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      throw new CustomError(400, 'Please provide an array of CV IDs to delete');
+    }
+
+    // Validate all IDs are strings/valid MongoDB ObjectIds
+    const validIds = ids.filter(id => {
+      if (typeof id !== 'string' || id.trim() === '') {
+        return false;
+      }
+      // Basic MongoDB ObjectId format validation (24 hex characters)
+      return /^[0-9a-fA-F]{24}$/.test(id.trim());
+    });
+
+    if (validIds.length === 0) {
+      throw new CustomError(400, 'No valid CV IDs provided');
+    }
+
+    if (validIds.length !== ids.length) {
+      throw new CustomError(400, 'Some CV IDs are invalid. Please provide valid MongoDB ObjectIds.');
+    }
+
+    // Find all CVs that belong to the user and match the provided IDs
+    const cvs = await CVBank.find({
+      _id: { $in: validIds },
+      userId: userId,
+      isActive: true, // Only delete active CVs
+    });
+
+    if (cvs.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No CVs found to delete',
+        data: {
+          deleted: 0,
+          requested: validIds.length,
+          notFound: validIds.length,
+        },
+      });
+    }
+
+    const deletedIds = [];
+    const notFoundIds = [];
+    const failedDeletes = [];
+
+    // Delete physical files and soft delete in database
+    for (const cv of cvs) {
+      try {
+        // Delete physical file
+        let filePath = cv.path;
+        
+        // Remove file:// protocol if present
+        if (filePath.startsWith('file:///')) {
+          filePath = filePath.substring(8); // Remove 'file:///'
+        } else if (filePath.startsWith('file://')) {
+          filePath = filePath.substring(7); // Remove 'file://'
+        }
+        
+        // Normalize path separators for current OS
+        filePath = path.normalize(filePath);
+        
+        // Delete physical file
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (fileErr) {
+            console.error(`Error deleting physical file ${filePath}:`, fileErr);
+            // Continue with database deletion even if file deletion fails
+          }
+        }
+
+        // Soft delete - set isActive to false
+        cv.isActive = false;
+        await cv.save();
+        
+        deletedIds.push(cv._id.toString());
+      } catch (err) {
+        console.error(`Error deleting CV ${cv._id}:`, err);
+        failedDeletes.push(cv._id.toString());
+      }
+    }
+
+    // Find IDs that were requested but not found
+    const foundIds = cvs.map(cv => cv._id.toString());
+    notFoundIds.push(...validIds.filter(id => !foundIds.includes(id)));
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${deletedIds.length} CV(s)`,
+    });
+  } catch (error) {
+    errorHandler(res, error, "deleteBulkCVs");
   }
 };
