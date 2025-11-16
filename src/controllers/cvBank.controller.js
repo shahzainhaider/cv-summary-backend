@@ -2,14 +2,31 @@ const CVBank = require('../models/cvBank.model');
 const CustomError = require('../utils/customError');
 const path = require('path');
 const fs = require('fs');
+const errorHandler = require('../utils/errorHandler');
 
 /**
  * Upload multiple CV files
  */
 exports.uploadCvs = async (req, res, next) => {
   try {
-    if (!req.files || req.files.length === 0) {
-      throw new CustomError(400, 'No files uploaded');
+    // Handle both 'cvs' and 'files' field names
+    let files = [];
+    if (req.files) {
+      // If using upload.fields, files will be an object with arrays
+      if (req.files.cvs && Array.isArray(req.files.cvs)) {
+        files = [...files, ...req.files.cvs];
+      }
+      if (req.files.files && Array.isArray(req.files.files)) {
+        files = [...files, ...req.files.files];
+      }
+      // If using upload.array, files will be a direct array
+      if (Array.isArray(req.files)) {
+        files = req.files;
+      }
+    }
+
+    if (!files || files.length === 0) {
+      throw new CustomError(400, 'No files uploaded. Please use field name "cvs" or "files" in your form-data.');
     }
 
     if (!req.user || !req.user._id) {
@@ -20,7 +37,7 @@ exports.uploadCvs = async (req, res, next) => {
     const uploads = [];
 
     // Process each uploaded file
-    for (const file of req.files) {
+    for (const file of files) {
       // file.path contains the full absolute path from multer
       // Convert to file:// URL format (e.g., file:///E:/MY/cv-summary/backend/uploads/...)
       let fullPath = path.resolve(file.path); // Ensure absolute path
@@ -68,13 +85,20 @@ exports.uploadCvs = async (req, res, next) => {
       message: `${uploads.length} CV file(s) uploaded successfully`,
       data: {
         uploaded: uploads,
-        total: req.files.length,
+        total: files.length,
       },
     });
   } catch (error) {
     // Clean up uploaded files if database save fails
-    if (req.files && req.files.length > 0) {
-      req.files.forEach(file => {
+    let filesToCleanup = [];
+    if (req.files) {
+      if (req.files.cvs) filesToCleanup = [...filesToCleanup, ...req.files.cvs];
+      if (req.files.files) filesToCleanup = [...filesToCleanup, ...req.files.files];
+      if (Array.isArray(req.files)) filesToCleanup = req.files;
+    }
+    
+    if (filesToCleanup && filesToCleanup.length > 0) {
+      filesToCleanup.forEach(file => {
         try {
           if (fs.existsSync(file.path)) {
             fs.unlinkSync(file.path);
@@ -84,7 +108,7 @@ exports.uploadCvs = async (req, res, next) => {
         }
       });
     }
-    next(error);
+    errorHandler(res, error, "uploadCvs");
   }
 };
 
@@ -151,6 +175,9 @@ exports.deleteCV = async (req, res, next) => {
 
     const { id } = req.params;
     const userId = req.user._id;
+
+    console.log(req.body);
+    console.log(req.params)
 
     const cv = await CVBank.findOne({ _id: id, userId: userId });
 

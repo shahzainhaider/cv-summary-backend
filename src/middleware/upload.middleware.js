@@ -56,7 +56,11 @@ const upload = multer({
 });
 
 // Middleware for multiple file uploads
-const uploadMultiple = upload.array('cvs', 10); // 'files' is the field name, max 10 files
+// Accepts field name 'cvs' or 'files'
+const uploadMultiple = upload.fields([
+  { name: 'cvs', maxCount: 10 },
+  { name: 'files', maxCount: 10 }
+]);
 
 module.exports = {
   uploadMultiple,

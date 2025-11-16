@@ -9,7 +9,15 @@ const router = express.Router();
 router.use(protectedRoute);
 
 // Upload multiple CV files
-router.post('/upload', uploadMultiple, uploadErrorHandler, uploadCvs);
+// Note: uploadErrorHandler must come before uploadCvs to catch multer errors
+router.post('/upload', (req, res, next) => {
+  uploadMultiple(req, res, (err) => {
+    if (err) {
+      return uploadErrorHandler(err, req, res, next);
+    }
+    next();
+  });
+}, uploadCvs);
 
 // Get all CVs for authenticated user
 router.get('/', getCVBank);
