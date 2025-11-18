@@ -12,7 +12,8 @@ const errorHandler = require('../utils/errorHandler');
  */
 exports.signup = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password,role } = req.body;
+    console.log(name, email, password,role);
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -33,6 +34,7 @@ exports.signup = async (req, res, next) => {
       lastName,
       email: email.toLowerCase(),
       password: hashedPassword,
+      role,
     });
 
     res.status(201).json({

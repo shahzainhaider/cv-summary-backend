@@ -1,5 +1,5 @@
 const express = require('express');
-const { getCVBank, uploadCvs, getCVById, deleteCV, deleteBulkCVs } = require('../controllers/cvBank.controller');
+const { getCVBank, uploadCvs, getCVById, deleteCV, deleteBulkCVs, getPositions } = require('../controllers/cvBank.controller');
 const { uploadMultiple } = require('../middleware/upload.middleware');
 const uploadErrorHandler = require('../middleware/uploadErrorHandler');
 const protectedRoute = require('../middleware/auth.middleware');
@@ -21,6 +21,9 @@ router.post('/upload', (req, res, next) => {
 
 // Get all CVs for authenticated user
 router.get('/', getCVBank);
+
+// Get all unique positions for filtering (must come before /:id route)
+router.get('/positions', getPositions);
 
 // Bulk delete route must come before /:id route to avoid route conflicts
 // Delete multiple CVs (bulk delete)

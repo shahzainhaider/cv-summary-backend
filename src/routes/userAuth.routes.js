@@ -6,7 +6,7 @@ const protectedRoute = require('../middleware/auth.middleware');
 const router = express.Router();
 
 // Auth routes
-router.post('/signup', signupValidation, validate, signup);
+router.post('/signup', signup);
 router.post('/login', loginValidation, validate, login);
 router.post('/logout', logout);
 

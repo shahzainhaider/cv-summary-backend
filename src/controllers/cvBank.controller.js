@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const errorHandler = require('../utils/errorHandler');
 const { extractText } = require('../utils/textExtractor');
-const { generateSummaryWithOllama } = require('../services/aiService');
+const { extractPositionAndSummary, generateSummaryWithOllama } = require('../services/aiService');
 
 /**
  * Upload multiple CV files
@@ -56,23 +56,39 @@ exports.uploadCvs = async (req, res, next) => {
         continue;
       }
 
-      // Extract text and generate summary
+      // Extract text, position, and generate summary
       let summary = '';
+      let position = 'Not Specified';
       try {
         // Extract text from CV file
         const extractedText = await extractText(file.path, file.mimetype);
         
         if (extractedText && extractedText.trim().length > 50) {
-          // Generate summary using Ollama AI
-          console.log(`Generating summary for CV: ${file.originalname}`);
-          summary = await generateSummaryWithOllama(extractedText);
-          console.log(`Summary generated successfully for: ${file.originalname}`);
+          // Extract position and generate summary using Ollama AI
+          console.log(`Extracting position and generating summary for CV: ${file.originalname}`);
+          const result = await extractPositionAndSummary(extractedText);
+          position = result.position || 'Not Specified';
+          summary = result.summary || '';
+          console.log(`Position extracted: ${position}, Summary generated successfully for: ${file.originalname}`);
         } else {
           summary = 'Unable to extract sufficient text from CV for summary generation.';
+          position = 'Not Specified';
           console.warn(`Insufficient text extracted from: ${file.originalname}`);
         }
       } catch (summaryError) {
-        console.error(`Error generating summary for ${file.originalname}:`, summaryError);
+        console.error(`Error generating summary/position for ${file.originalname}:`, summaryError);
+        
+        // Try to extract position separately if summary generation fails
+        try {
+          const extractedText = await extractText(file.path, file.mimetype);
+          if (extractedText && extractedText.trim().length > 50) {
+            const { extractPositionFromCV } = require('../services/aiService');
+            position = await extractPositionFromCV(extractedText);
+          }
+        } catch (positionError) {
+          console.error(`Error extracting position: ${positionError.message}`);
+          position = 'Not Specified';
+        }
         
         // Set appropriate error message based on error type
         if (summaryError.status === 503) {
@@ -89,11 +105,12 @@ exports.uploadCvs = async (req, res, next) => {
         // The CV will be saved without summary, which can be regenerated later
       }
 
-      // Create new CV record with summary
+      // Create new CV record with position and summary
       const cvRecord = await CVBank.create({
         userId: userId,
         path: fileUrl,
         summary: summary,
+        position: position,
         originalName: file.originalname,
         mimeType: file.mimetype,
         fileSize: file.size,
@@ -105,14 +122,19 @@ exports.uploadCvs = async (req, res, next) => {
         path: fileUrl,
         originalName: file.originalname,
         fileSize: file.size,
+        position: cvRecord.position,
         summary: cvRecord.summary,
       });
     }
 
-    res.status(201).json({
-      success: true,
-      message: `${uploads.length} CV file(s) uploaded successfully`,
-    });
+      res.status(201).json({
+        success: true,
+        message: `${uploads.length} CV file(s) uploaded successfully`,
+        data: {
+          uploaded: uploads,
+          total: files.length,
+        },
+      });
   } catch (error) {
     // Clean up uploaded files if database save fails
     let filesToCleanup = [];
@@ -142,19 +164,64 @@ exports.uploadCvs = async (req, res, next) => {
  */
 exports.getCVBank = async (req, res, next) => {
   try {
-    if (!req.user || !req.user._id) {
-      throw new CustomError(401, 'User not authenticated');
-    }
+    // if (!req.user || !req.user._id) {
+    //   throw new CustomError(401, 'User not authenticated');
+    // }
 
-    const userId = req.user._id;
-    const cvs = await CVBank.find({ userId: userId, isActive: true })
+    // const userId = req.user._id;
+    
+    // Get filter query parameters
+    const { position } = req.query;
+    
+    // Build query
+    // const query = { userId: userId, isActive: true };
+    const query = {  isActive: true };
+    if (position && position.trim() !== '') {
+      // Case-insensitive search for position
+      query.position = { $regex: position.trim(), $options: 'i' };
+    }
+    
+    const cvs = await CVBank.find(query)
       .sort({ createdAt: -1 })
-      .select('_id path summary originalName mimeType fileSize createdAt updatedAt');
+      .select('_id path summary position originalName mimeType fileSize createdAt updatedAt');
 
     res.status(200).json({
       success: true,
       message: 'CVs retrieved successfully',
       data: cvs,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get all unique positions for the authenticated user (for filtering)
+ */
+exports.getPositions = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user._id) {
+      throw new CustomError(401, 'User not authenticated');
+    }
+
+    const userId = req.user._id;
+    
+    // Get distinct positions for the user
+    const positions = await CVBank.distinct('position', {
+      userId: userId,
+      isActive: true,
+      position: { $nin: ['', 'Not Specified'] } // Exclude empty and default positions
+    });
+
+    // Sort positions alphabetically
+    const sortedPositions = positions
+      .filter(pos => pos && pos.trim() !== '')
+      .sort();
+
+    res.status(200).json({
+      success: true,
+      message: 'Positions retrieved successfully',
+      data: sortedPositions,
     });
   } catch (error) {
     next(error);

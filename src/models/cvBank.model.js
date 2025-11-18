@@ -21,6 +21,12 @@ const cvBankSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  position: {
+    type: String,
+    default: '',
+    trim: true,
+    index: true, // Index for faster filtering
+  },
   mimeType: {
     type: String,
     required: true,
@@ -40,6 +46,7 @@ const cvBankSchema = new mongoose.Schema({
 // Indexes for faster queries
 cvBankSchema.index({ userId: 1, createdAt: -1 });
 cvBankSchema.index({ userId: 1, path: 1 }, { unique: true }); // Ensure unique CV path per user
+cvBankSchema.index({ userId: 1, position: 1 }); // Index for filtering by position
 
 const CVBank = mongoose.models.CVBank || mongoose.model('CVBank', cvBankSchema);
 

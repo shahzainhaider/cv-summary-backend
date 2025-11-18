@@ -8,6 +8,66 @@ const ollama = new Ollama({
 });
 
 /**
+ * Extract position/job title from CV text
+ * @param {string} cvText - Extracted text from CV
+ * @returns {Promise<string>} Extracted position/job title
+ */
+const extractPositionFromCV = async (cvText) => {
+  try {
+    // Use first 2000 characters for position extraction (usually position is at the top)
+    const textForPosition = cvText.substring(0, 2000);
+
+    const prompt = `You are a CV analyzer. Extract the current or most recent job title/position from the following CV/resume text.
+
+Look for:
+- Current position or job title
+- Most recent role if multiple positions are listed
+- Professional title (e.g., "Software Engineer", "Marketing Manager", "Data Scientist")
+- If no clear position is found, return "Not Specified"
+
+Respond with ONLY the job title/position in 2-5 words maximum. Do not include company name, dates, or any other information.
+
+CV Content:
+${textForPosition}
+
+Position/Job Title:`;
+
+    const model = process.env.OLLAMA_MODEL || 'llama3';
+
+    const response = await ollama.generate({
+      model: model,
+      prompt: prompt,
+      options: {
+        temperature: 0.3, // Lower temperature for more consistent extraction
+        num_predict: 50, // Short response for position only
+      }
+    });
+
+    let position = response.response?.trim() || 'Not Specified';
+    
+    // Clean up the position string
+    position = position.replace(/^Position[:\s]*/i, '').replace(/^Job Title[:\s]*/i, '').trim();
+    
+    // If position is too long or contains unwanted text, try to extract just the title
+    if (position.length > 100 || position.includes('\n')) {
+      const lines = position.split('\n');
+      position = lines[0].trim();
+    }
+
+    // Default if empty or too short
+    if (!position || position.length < 2) {
+      position = 'Not Specified';
+    }
+
+    return position;
+  } catch (error) {
+    console.error('[Ollama] Error extracting position:', error.message);
+    // Return default on error instead of throwing
+    return 'Not Specified';
+  }
+};
+
+/**
  * Generate CV summary using Ollama
  * @param {string} cvText - Extracted text from CV
  * @returns {Promise<string>} Generated summary
@@ -71,6 +131,61 @@ Please provide the summary now:`;
 };
 
 /**
+ * Extract both position and summary from CV text
+ * @param {string} cvText - Extracted text from CV
+ * @returns {Promise<{position: string, summary: string}>} Object containing position and summary
+ */
+const extractPositionAndSummary = async (cvText) => {
+  let position = 'Not Specified';
+  let summary = '';
+  
+  try {
+    // Extract position and summary in parallel for better performance
+    const [positionResult, summaryResult] = await Promise.allSettled([
+      extractPositionFromCV(cvText),
+      generateSummaryWithOllama(cvText)
+    ]);
+
+    // Handle position extraction result
+    if (positionResult.status === 'fulfilled') {
+      position = positionResult.value || 'Not Specified';
+    } else {
+      console.error('[Ollama] Position extraction failed:', positionResult.reason?.message);
+    }
+
+    // Handle summary generation result
+    if (summaryResult.status === 'fulfilled') {
+      summary = summaryResult.value || '';
+    } else {
+      // If summary fails, throw error but keep position
+      const summaryError = summaryResult.reason;
+      if (summaryError.status === 503) {
+        throw new CustomError(503, summaryError.message);
+      } else if (summaryError.status === 404) {
+        throw new CustomError(404, summaryError.message);
+      } else {
+        throw new CustomError(500, `Failed to generate summary: ${summaryError.message}`);
+      }
+    }
+
+    return { position, summary };
+  } catch (error) {
+    // If it's a CustomError, re-throw it with position included
+    if (error instanceof CustomError) {
+      // Position should already be set from Promise.allSettled
+      throw error;
+    }
+    // For other errors, try to get position separately
+    try {
+      position = await extractPositionFromCV(cvText);
+    } catch (positionError) {
+      console.error('[Ollama] Position extraction also failed:', positionError.message);
+    }
+    throw error;
+  }
+};
+
+/**
  * Test Ollama connection
  * @returns {Promise<boolean>} True if connection successful
  */
@@ -90,5 +205,7 @@ const testOllamaConnection = async () => {
 
 module.exports = {
   generateSummaryWithOllama,
+  extractPositionFromCV,
+  extractPositionAndSummary,
   testOllamaConnection,
 };
