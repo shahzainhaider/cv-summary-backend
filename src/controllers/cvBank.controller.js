@@ -229,6 +229,64 @@ exports.getPositions = async (req, res, next) => {
 };
 
 /**
+ * Download CV file by ID
+ */
+exports.downloadCV = async (req, res, next) => {
+  try {
+    // Optional: Check authentication if needed
+    // if (!req.user || !req.user._id) {
+    //   throw new CustomError(401, 'User not authenticated');
+    // }
+
+    const { id } = req.params;
+    // const userId = req.user._id;
+
+    // Find CV by ID (removed userId check since user commented it out in getCVBank)
+    const cv = await CVBank.findOne({ _id: id, isActive: true });
+
+    if (!cv) {
+      throw new CustomError(404, 'CV not found');
+    }
+
+    // Extract file path from file:// URL format
+    let filePath = cv.path;
+    
+    // Remove file:// protocol if present
+    if (filePath.startsWith('file:///')) {
+      filePath = filePath.substring(8); // Remove 'file:///'
+    } else if (filePath.startsWith('file://')) {
+      filePath = filePath.substring(7); // Remove 'file://'
+    }
+    
+    // Normalize path separators for current OS
+    filePath = path.normalize(filePath);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      throw new CustomError(404, 'CV file not found on server');
+    }
+
+    // Ensure file path is absolute for res.download()
+    const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+    
+    // Set the download filename
+    const fileName = cv.originalName || `CV-${id}${path.extname(filePath)}`;
+    
+    // Download file with proper headers
+    res.download(absolutePath, fileName, (err) => {
+      if (err) {
+        console.error(`Error downloading file ${absolutePath}:`, err);
+        if (!res.headersSent) {
+          errorHandler(res, new CustomError(500, 'Error downloading file'), "downloadCV");
+        }
+      }
+    });
+  } catch (error) {
+    errorHandler(res, error, "downloadCV");
+  }
+};
+
+/**
  * Get single CV by ID
  */
 exports.getCVById = async (req, res, next) => {
