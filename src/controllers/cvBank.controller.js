@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const errorHandler = require('../utils/errorHandler');
 const { extractText } = require('../utils/textExtractor');
-const { extractPositionAndSummary, generateSummaryWithOllama } = require('../services/aiService');
+const { extractPositionAndSummary } = require('../services/aiService');
 
 /**
  * Upload multiple CV files
@@ -64,7 +64,7 @@ exports.uploadCvs = async (req, res, next) => {
         const extractedText = await extractText(file.path, file.mimetype);
         
         if (extractedText && extractedText.trim().length > 50) {
-          // Extract position and generate summary using Ollama AI
+          // Extract position and generate summary using Groq AI
           console.log(`Extracting position and generating summary for CV: ${file.originalname}`);
           const result = await extractPositionAndSummary(extractedText);
           position = result.position || 'Not Specified';
@@ -91,8 +91,12 @@ exports.uploadCvs = async (req, res, next) => {
         }
         
         // Set appropriate error message based on error type
-        if (summaryError.status === 503) {
-          summary = 'Summary generation service unavailable. Please ensure Ollama is running.';
+        if (summaryError.status === 401) {
+          summary = 'Summary generation service unavailable. Please check your Groq API key.';
+        } else if (summaryError.status === 429) {
+          summary = 'Summary generation rate limit exceeded. Please try again later.';
+        } else if (summaryError.status === 503) {
+          summary = 'Summary generation service unavailable. Please try again later.';
         } else if (summaryError.status === 404) {
           summary = `Summary generation model not found. Error: ${summaryError.message}`;
         } else if (summaryError.message.includes('extract text')) {

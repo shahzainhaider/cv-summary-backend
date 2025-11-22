@@ -1,10 +1,10 @@
-const { Ollama } = require('ollama');
+const Groq = require('groq-sdk');
 const CustomError = require('../utils/customError');
 const serverConfig = require('../config/server.config');
 
-// Initialize Ollama client
-const ollama = new Ollama({
-  host: process.env.OLLAMA_HOST || 'http://localhost:11434'
+// Initialize Groq client
+const groq = new Groq({
+  apiKey: serverConfig.groqApiKey,
 });
 
 /**
@@ -32,18 +32,21 @@ ${textForPosition}
 
 Position/Job Title:`;
 
-    const model = process.env.OLLAMA_MODEL || 'llama3';
+    const model = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
-    const response = await ollama.generate({
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
       model: model,
-      prompt: prompt,
-      options: {
-        temperature: 0.3, // Lower temperature for more consistent extraction
-        num_predict: 50, // Short response for position only
-      }
+      temperature: 0.3, // Lower temperature for more consistent extraction
+      max_tokens: 50, // Short response for position only
     });
 
-    let position = response.response?.trim() || 'Not Specified';
+    let position = completion.choices[0]?.message?.content?.trim() || 'Not Specified';
     
     // Clean up the position string
     position = position.replace(/^Position[:\s]*/i, '').replace(/^Job Title[:\s]*/i, '').trim();
@@ -61,21 +64,21 @@ Position/Job Title:`;
 
     return position;
   } catch (error) {
-    console.error('[Ollama] Error extracting position:', error.message);
+    console.error('[Groq] Error extracting position:', error.message);
     // Return default on error instead of throwing
     return 'Not Specified';
   }
 };
 
 /**
- * Generate CV summary using Ollama
+ * Generate CV summary using Groq
  * @param {string} cvText - Extracted text from CV
  * @returns {Promise<string>} Generated summary
  */
-const generateSummaryWithOllama = async (cvText) => {
+const generateSummaryWithGroq = async (cvText) => {
   try {
-    // Limit text length to avoid token limits (most models have 4k-8k context)
-    const maxTextLength = 4000;
+    // Limit text length to avoid token limits (Groq models typically support up to 32k tokens)
+    const maxTextLength = 12000; // Increased for Groq's larger context window
     const truncatedText = cvText.length > maxTextLength 
       ? cvText.substring(0, maxTextLength) + '...' 
       : cvText;
@@ -96,18 +99,21 @@ ${truncatedText}
 
 Please provide the summary now:`;
 
-    const model = process.env.OLLAMA_MODEL || 'llama3';
+    const model = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
-    const response = await ollama.generate({
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
       model: model,
-      prompt: prompt,
-      options: {
-        temperature: 0.7, // Balance between creativity and consistency
-        num_predict: 400, // Limit response to ~400 tokens (roughly 300 words)
-      }
+      temperature: 0.7, // Balance between creativity and consistency
+      max_tokens: 400, // Limit response to ~400 tokens (roughly 300 words)
     });
 
-    const summary = response.response?.trim() || 'Summary generation completed but no content returned.';
+    const summary = completion.choices[0]?.message?.content?.trim() || 'Summary generation completed but no content returned.';
 
     // Validate summary length
     if (summary.length < 50) {
@@ -116,14 +122,19 @@ Please provide the summary now:`;
 
     return summary;
   } catch (error) {
-    // Check if it's a connection error (Ollama not running)
-    if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
-      throw new CustomError(503, 'Ollama service is not running. Please start Ollama service or check OLLAMA_HOST in environment variables.');
+    // Check for API key errors
+    if (error.status === 401 || error.message.includes('api key') || error.message.includes('authentication')) {
+      throw new CustomError(401, 'Invalid Groq API key. Please check your GROQ_API_KEY environment variable.');
     }
     
-    // Check if model is not found
-    if (error.message.includes('model') && error.message.includes('not found')) {
-      throw new CustomError(404, `Ollama model "${process.env.OLLAMA_MODEL || 'llama3'}" not found. Please install it using: ollama pull ${process.env.OLLAMA_MODEL || 'llama3'}`);
+    // Check for rate limiting
+    if (error.status === 429 || error.message.includes('rate limit')) {
+      throw new CustomError(429, 'Groq API rate limit exceeded. Please try again later.');
+    }
+    
+    // Check if model is not found or invalid
+    if (error.status === 404 || error.message.includes('model') && error.message.includes('not found')) {
+      throw new CustomError(404, `Groq model "${process.env.GROQ_MODEL || 'llama-3.1-8b-instant'}" not found or invalid.`);
     }
 
     throw new CustomError(500, `Failed to generate summary: ${error.message}`);
@@ -143,14 +154,14 @@ const extractPositionAndSummary = async (cvText) => {
     // Extract position and summary in parallel for better performance
     const [positionResult, summaryResult] = await Promise.allSettled([
       extractPositionFromCV(cvText),
-      generateSummaryWithOllama(cvText)
+      generateSummaryWithGroq(cvText)
     ]);
 
     // Handle position extraction result
     if (positionResult.status === 'fulfilled') {
       position = positionResult.value || 'Not Specified';
     } else {
-      console.error('[Ollama] Position extraction failed:', positionResult.reason?.message);
+      console.error('[Groq] Position extraction failed:', positionResult.reason?.message);
     }
 
     // Handle summary generation result
@@ -163,6 +174,10 @@ const extractPositionAndSummary = async (cvText) => {
         throw new CustomError(503, summaryError.message);
       } else if (summaryError.status === 404) {
         throw new CustomError(404, summaryError.message);
+      } else if (summaryError.status === 401) {
+        throw new CustomError(401, summaryError.message);
+      } else if (summaryError.status === 429) {
+        throw new CustomError(429, summaryError.message);
       } else {
         throw new CustomError(500, `Failed to generate summary: ${summaryError.message}`);
       }
@@ -179,33 +194,39 @@ const extractPositionAndSummary = async (cvText) => {
     try {
       position = await extractPositionFromCV(cvText);
     } catch (positionError) {
-      console.error('[Ollama] Position extraction also failed:', positionError.message);
+      console.error('[Groq] Position extraction also failed:', positionError.message);
     }
     throw error;
   }
 };
 
 /**
- * Test Ollama connection
+ * Test Groq connection
  * @returns {Promise<boolean>} True if connection successful
  */
-const testOllamaConnection = async () => {
+const testGroqConnection = async () => {
   try {
-    const model = process.env.OLLAMA_MODEL || 'llama3';
-    await ollama.generate({
+    const model = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+    await groq.chat.completions.create({
+      messages: [
+        {
+          role: 'user',
+          content: 'test',
+        },
+      ],
       model: model,
-      prompt: 'test',
-      options: { num_predict: 5 }
+      max_tokens: 5,
     });
     return true;
   } catch (error) {
+    console.error('[Groq] Connection test failed:', error.message);
     return false;
   }
 };
 
 module.exports = {
-  generateSummaryWithOllama,
+  generateSummaryWithGroq,
   extractPositionFromCV,
   extractPositionAndSummary,
-  testOllamaConnection,
+  testGroqConnection,
 };
