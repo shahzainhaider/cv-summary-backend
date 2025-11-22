@@ -3,6 +3,11 @@ const CustomError = require('../utils/customError');
 const serverConfig = require('../config/server.config');
 
 // Initialize Groq client
+if (!serverConfig.groqApiKey) {
+  console.error('❌ ERROR: GROQ_API_KEY is not set in environment variables.');
+  console.error('Please create a .env file with: GROQ_API_KEY=your_api_key_here');
+}
+
 const groq = new Groq({
   apiKey: serverConfig.groqApiKey,
 });
