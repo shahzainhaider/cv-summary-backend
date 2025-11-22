@@ -146,6 +146,9 @@ Please provide the summary now:`;
   }
 };
 
+// Helper function to wait for specified milliseconds
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * Extract both position and summary from CV text
  * @param {string} cvText - Extracted text from CV
@@ -156,25 +159,29 @@ const extractPositionAndSummary = async (cvText) => {
   let summary = '';
   
   try {
-    // Extract position and summary in parallel for better performance
-    const [positionResult, summaryResult] = await Promise.allSettled([
-      extractPositionFromCV(cvText),
-      generateSummaryWithGroq(cvText)
-    ]);
-
-    // Handle position extraction result
-    if (positionResult.status === 'fulfilled') {
-      position = positionResult.value || 'Not Specified';
-    } else {
-      console.error('[Groq] Position extraction failed:', positionResult.reason?.message);
+    // Extract position first (sequential processing with delay between calls)
+    console.log('[Groq] Extracting position...');
+    try {
+      position = await extractPositionFromCV(cvText);
+      // Wait 1 minute after position extraction Groq call
+      console.log('[Groq] Position extracted. Waiting 60 seconds before next API call...');
+      await delay(60000); // 1 minute delay
+      console.log('[Groq] Resuming...');
+    } catch (positionError) {
+      console.error('[Groq] Position extraction failed:', positionError.message);
+      position = 'Not Specified';
     }
 
-    // Handle summary generation result
-    if (summaryResult.status === 'fulfilled') {
-      summary = summaryResult.value || '';
-    } else {
+    // Generate summary after delay
+    console.log('[Groq] Generating summary...');
+    try {
+      summary = await generateSummaryWithGroq(cvText);
+      // Wait 1 minute after summary generation Groq call
+      console.log('[Groq] Summary generated. Waiting 60 seconds after API call...');
+      await delay(60000); // 1 minute delay
+      console.log('[Groq] Completed.');
+    } catch (summaryError) {
       // If summary fails, throw error but keep position
-      const summaryError = summaryResult.reason;
       if (summaryError.status === 503) {
         throw new CustomError(503, summaryError.message);
       } else if (summaryError.status === 404) {
@@ -192,15 +199,9 @@ const extractPositionAndSummary = async (cvText) => {
   } catch (error) {
     // If it's a CustomError, re-throw it with position included
     if (error instanceof CustomError) {
-      // Position should already be set from Promise.allSettled
       throw error;
     }
-    // For other errors, try to get position separately
-    try {
-      position = await extractPositionFromCV(cvText);
-    } catch (positionError) {
-      console.error('[Groq] Position extraction also failed:', positionError.message);
-    }
+    // For other errors, position should already be set
     throw error;
   }
 };
