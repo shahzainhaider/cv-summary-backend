@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const errorHandler = require('../utils/errorHandler');
 const { extractText } = require('../utils/textExtractor');
-const { extractPositionAndSummary, generateSummaryWithOllama } = require('../services/aiService');
+const { extractPositionAndSummary } = require('../services/aiService');
 
 /**
  * Upload multiple CV files
@@ -37,9 +37,9 @@ exports.uploadCvs = async (req, res, next) => {
 
     const userId = req.user._id;
     const uploads = [];
-    const cvsToProcess = []; // Store CV records that need summary generation
+    const cvsToProcess = []; // Store CV records that need AI processing
 
-    // Process each uploaded file - save immediately without waiting for summary
+    // Process each uploaded file - save immediately without waiting for AI processing
     for (const file of files) {
       let fullPath = path.resolve(file.path); // Ensure absolute path
       
@@ -102,85 +102,98 @@ exports.uploadCvs = async (req, res, next) => {
     // Process summaries in background using setImmediate
     if (cvsToProcess.length > 0) {
       setImmediate(async () => {
-        console.log(`[Background] Starting summary generation for ${cvsToProcess.length} CV(s)...`);
+        console.log(`[Background] Starting AI processing for ${cvsToProcess.length} CV(s)...`);
+        console.log(`[Background] Rate limiting: 1 minute delay after each Groq API call`);
+        const startTime = Date.now();
         
-        // Process CVs in parallel batches (3 at a time)
-        const CONCURRENCY_LIMIT = 3;
-        for (let i = 0; i < cvsToProcess.length; i += CONCURRENCY_LIMIT) {
-          const batch = cvsToProcess.slice(i, i + CONCURRENCY_LIMIT);
+        // Helper function to wait for specified milliseconds
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        
+        // Process CVs sequentially (one at a time) with delay after each Groq call
+        for (let i = 0; i < cvsToProcess.length; i++) {
+          const { cvId, filePath, fileName, mimetype } = cvsToProcess[i];
+          const cvIndex = i + 1;
           
-          await Promise.allSettled(
-            batch.map(async ({ cvId, filePath, fileName, mimetype }) => {
-              try {
-                // Extract text from CV file
-                const extractedText = await extractText(filePath, mimetype);
-                
-                if (!extractedText || extractedText.trim().length < 50) {
-                  // Update with error message
-                  await CVBank.findByIdAndUpdate(cvId, {
-                    summary: 'Unable to extract sufficient text from CV for summary generation.',
-                    position: 'Not Specified',
-                  });
-                  console.log(`[Background] ${fileName}: Insufficient text extracted`);
-                  return;
-                }
+          try {
+            // Extract text from CV file (no Groq call, no delay needed)
+            const extractedText = await extractText(filePath, mimetype);
+            
+            if (!extractedText || extractedText.trim().length < 50) {
+              // Update with error message
+              await CVBank.findByIdAndUpdate(cvId, {
+                summary: 'Unable to extract sufficient text from CV for summary generation.',
+                position: 'Not Specified',
+              });
+              console.log(`[Background] [${cvIndex}/${cvsToProcess.length}] ${fileName}: Insufficient text extracted`);
+              continue; // Skip to next CV
+            }
 
-                // Extract position and generate summary using Ollama AI
-                console.log(`[Background] Processing ${fileName}...`);
-                const startTime = Date.now();
-                
-                const result = await extractPositionAndSummary(extractedText);
-                const position = result.position || 'Not Specified';
-                const summary = result.summary || '';
-                
-                const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
-                
-                // Update CV record with generated summary and position
-                await CVBank.findByIdAndUpdate(cvId, {
-                  summary: summary,
-                  position: position,
-                });
-                
-                console.log(`[Background] ${fileName}: Completed in ${processingTime}s - Position: ${position}`);
-              } catch (summaryError) {
-                console.error(`[Background] Error processing ${fileName}:`, summaryError.message);
-                
-                let position = 'Not Specified';
-                let summary = '';
-                
-                // Try to extract position separately if summary generation fails
-                try {
-                  const extractedText = await extractText(filePath, mimetype);
-                  if (extractedText && extractedText.trim().length > 50) {
-                    const { extractPositionFromCV } = require('../services/aiService');
-                    position = await extractPositionFromCV(extractedText);
-                  }
-                } catch (positionError) {
-                  console.error(`[Background] ${fileName}: Position extraction failed:`, positionError.message);
-                }
-                
-                // Set appropriate error message based on error type
-                if (summaryError.status === 503) {
-                  summary = 'Summary generation service unavailable. Please ensure Ollama is running.';
-                } else if (summaryError.status === 404) {
-                  summary = `Summary generation model not found. Error: ${summaryError.message}`;
-                } else if (summaryError.message.includes('extract text')) {
-                  summary = `Failed to extract text from file: ${summaryError.message}`;
-                } else {
-                  summary = `Summary generation failed: ${summaryError.message}. You can retry later.`;
-                }
-                
-                // Update CV record with error message
-                await CVBank.findByIdAndUpdate(cvId, {
-                  summary: summary,
-                  position: position,
-                });
+            // Extract position and generate summary using Groq AI
+            console.log(`[Background] [${cvIndex}/${cvsToProcess.length}] Processing ${fileName}...`);
+            const cvStartTime = Date.now();
+            
+            // Make Groq API call (this internally calls Groq twice - position and summary)
+            const result = await extractPositionAndSummary(extractedText);
+            const position = result.position || 'Not Specified';
+            const summary = result.summary || '';
+            
+            const processingTime = ((Date.now() - cvStartTime) / 1000).toFixed(2);
+            
+            // Update CV record with generated summary and position
+            await CVBank.findByIdAndUpdate(cvId, {
+              summary: summary,
+              position: position,
+            });
+            
+            console.log(`[Background] [${cvIndex}/${cvsToProcess.length}] ${fileName}: Completed in ${processingTime}s - Position: ${position}`);
+            // Delay is already handled inside extractPositionAndSummary after each Groq call
+            
+          } catch (summaryError) {
+            console.error(`[Background] [${cvIndex}/${cvsToProcess.length}] Error processing ${fileName}:`, summaryError.message);
+            
+            let position = 'Not Specified';
+            let summary = '';
+            
+            // Try to extract position separately if summary generation fails (this is also a Groq call)
+            try {
+              const extractedText = await extractText(filePath, mimetype);
+              if (extractedText && extractedText.trim().length > 50) {
+                const { extractPositionFromCV } = require('../services/aiService');
+                position = await extractPositionFromCV(extractedText);
+                // Wait 1 minute after this Groq API call (position extraction)
+                console.log(`[Background] Waiting 60 seconds after position extraction...`);
+                await delay(30000);
               }
-            })
-          );
+            } catch (positionError) {
+              console.error(`[Background] ${fileName}: Position extraction failed:`, positionError.message);
+            }
+            
+            // Set appropriate error message based on error type
+            if (summaryError.status === 401) {
+              summary = 'Summary generation service unavailable. Please check your Groq API key.';
+            } else if (summaryError.status === 429) {
+              summary = 'Summary generation rate limit exceeded. Please try again later.';
+            } else if (summaryError.status === 503) {
+              summary = 'Summary generation service unavailable. Please try again later.';
+            } else if (summaryError.status === 404) {
+              summary = `Summary generation model not found. Error: ${summaryError.message}`;
+            } else if (summaryError.message.includes('extract text')) {
+              summary = `Failed to extract text from file: ${summaryError.message}`;
+            } else {
+              summary = `Summary generation failed: ${summaryError.message}. You can retry later.`;
+            }
+            
+            // Update CV record with error message
+            await CVBank.findByIdAndUpdate(cvId, {
+              summary: summary,
+              position: position,
+            });
+            // Delay already handled above if position extraction was attempted
+          }
         }
         
-        console.log(`[Background] Summary generation completed for ${cvsToProcess.length} CV(s)`);
+        const totalTime = ((Date.now() - startTime) / 1000 / 60).toFixed(2); // Convert to minutes
+        console.log(`[Background] AI processing completed for ${cvsToProcess.length} CV(s) in ${totalTime} minutes`);
       });
     }
   } catch (error) {
@@ -276,9 +289,6 @@ exports.getPositions = async (req, res, next) => {
   }
 };
 
-/**
- * Download CV file by ID
- */
 exports.downloadCV = async (req, res, next) => {
   try {
     // Optional: Check authentication if needed
