@@ -165,7 +165,7 @@ const extractPositionAndSummary = async (cvText) => {
       position = await extractPositionFromCV(cvText);
       // Wait 1 minute after position extraction Groq call
       console.log('[Groq] Position extracted. Waiting 60 seconds before next API call...');
-      await delay(60000); // 1 minute delay
+      await delay(30000); // 30 seconds delay
       console.log('[Groq] Resuming...');
     } catch (positionError) {
       console.error('[Groq] Position extraction failed:', positionError.message);
@@ -178,7 +178,7 @@ const extractPositionAndSummary = async (cvText) => {
       summary = await generateSummaryWithGroq(cvText);
       // Wait 1 minute after summary generation Groq call
       console.log('[Groq] Summary generated. Waiting 60 seconds after API call...');
-      await delay(60000); // 1 minute delay
+      await delay(30000); // 30 seconds delay
       console.log('[Groq] Completed.');
     } catch (summaryError) {
       // If summary fails, throw error but keep position
