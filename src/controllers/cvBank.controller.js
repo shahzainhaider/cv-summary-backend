@@ -37,8 +37,9 @@ exports.uploadCvs = async (req, res, next) => {
 
     const userId = req.user._id;
     const uploads = [];
+    const cvsToProcess = []; // Store CV records that need summary generation
 
-    // Process each uploaded file
+    // Process each uploaded file - save immediately without waiting for summary
     for (const file of files) {
       let fullPath = path.resolve(file.path); // Ensure absolute path
       
@@ -52,65 +53,17 @@ exports.uploadCvs = async (req, res, next) => {
       });
 
       if (existingCV) {
-        // File already exists, skip or update
+        // File already exists, skip
         continue;
       }
 
-      // Extract text, position, and generate summary
-      let summary = '';
-      let position = 'Not Specified';
-      try {
-        // Extract text from CV file
-        const extractedText = await extractText(file.path, file.mimetype);
-        
-        if (extractedText && extractedText.trim().length > 50) {
-          // Extract position and generate summary using Ollama AI
-          console.log(`Extracting position and generating summary for CV: ${file.originalname}`);
-          const result = await extractPositionAndSummary(extractedText);
-          position = result.position || 'Not Specified';
-          summary = result.summary || '';
-          console.log(`Position extracted: ${position}, Summary generated successfully for: ${file.originalname}`);
-        } else {
-          summary = 'Unable to extract sufficient text from CV for summary generation.';
-          position = 'Not Specified';
-          console.warn(`Insufficient text extracted from: ${file.originalname}`);
-        }
-      } catch (summaryError) {
-        console.error(`Error generating summary/position for ${file.originalname}:`, summaryError);
-        
-        // Try to extract position separately if summary generation fails
-        try {
-          const extractedText = await extractText(file.path, file.mimetype);
-          if (extractedText && extractedText.trim().length > 50) {
-            const { extractPositionFromCV } = require('../services/aiService');
-            position = await extractPositionFromCV(extractedText);
-          }
-        } catch (positionError) {
-          console.error(`Error extracting position: ${positionError.message}`);
-          position = 'Not Specified';
-        }
-        
-        // Set appropriate error message based on error type
-        if (summaryError.status === 503) {
-          summary = 'Summary generation service unavailable. Please ensure Ollama is running.';
-        } else if (summaryError.status === 404) {
-          summary = `Summary generation model not found. Error: ${summaryError.message}`;
-        } else if (summaryError.message.includes('extract text')) {
-          summary = `Failed to extract text from file: ${summaryError.message}`;
-        } else {
-          summary = `Summary generation failed: ${summaryError.message}. You can retry later.`;
-        }
-        
-        // Continue with upload even if summary generation fails
-        // The CV will be saved without summary, which can be regenerated later
-      }
-
-      // Create new CV record with position and summary
+      // Create CV record immediately with placeholder values
+      // Summary and position will be generated in background
       const cvRecord = await CVBank.create({
         userId: userId,
         path: fileUrl,
-        summary: summary,
-        position: position,
+        summary: 'Processing summary...', // Placeholder
+        position: 'Processing...', // Placeholder
         originalName: file.originalname,
         mimeType: file.mimetype,
         fileSize: file.size,
@@ -125,16 +78,111 @@ exports.uploadCvs = async (req, res, next) => {
         position: cvRecord.position,
         summary: cvRecord.summary,
       });
+
+      // Store file info for background processing
+      cvsToProcess.push({
+        cvId: cvRecord._id,
+        filePath: file.path,
+        fileName: file.originalname,
+        mimetype: file.mimetype,
+      });
     }
 
-      res.status(201).json({
-        success: true,
-        message: `${uploads.length} CV file(s) uploaded successfully`,
-        data: {
-          uploaded: uploads,
-          total: files.length,
-        },
+    // Send fast response to client immediately
+    res.status(201).json({
+      success: true,
+      message: `${uploads.length} CV file(s) uploaded successfully. Summary generation is in progress.`,
+      data: {
+        uploaded: uploads,
+        total: files.length,
+        processingStatus: 'in_progress', // Indicate that summaries are being processed
+      },
+    });
+
+    // Process summaries in background using setImmediate
+    if (cvsToProcess.length > 0) {
+      setImmediate(async () => {
+        console.log(`[Background] Starting summary generation for ${cvsToProcess.length} CV(s)...`);
+        
+        // Process CVs in parallel batches (3 at a time)
+        const CONCURRENCY_LIMIT = 3;
+        for (let i = 0; i < cvsToProcess.length; i += CONCURRENCY_LIMIT) {
+          const batch = cvsToProcess.slice(i, i + CONCURRENCY_LIMIT);
+          
+          await Promise.allSettled(
+            batch.map(async ({ cvId, filePath, fileName, mimetype }) => {
+              try {
+                // Extract text from CV file
+                const extractedText = await extractText(filePath, mimetype);
+                
+                if (!extractedText || extractedText.trim().length < 50) {
+                  // Update with error message
+                  await CVBank.findByIdAndUpdate(cvId, {
+                    summary: 'Unable to extract sufficient text from CV for summary generation.',
+                    position: 'Not Specified',
+                  });
+                  console.log(`[Background] ${fileName}: Insufficient text extracted`);
+                  return;
+                }
+
+                // Extract position and generate summary using Ollama AI
+                console.log(`[Background] Processing ${fileName}...`);
+                const startTime = Date.now();
+                
+                const result = await extractPositionAndSummary(extractedText);
+                const position = result.position || 'Not Specified';
+                const summary = result.summary || '';
+                
+                const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                
+                // Update CV record with generated summary and position
+                await CVBank.findByIdAndUpdate(cvId, {
+                  summary: summary,
+                  position: position,
+                });
+                
+                console.log(`[Background] ${fileName}: Completed in ${processingTime}s - Position: ${position}`);
+              } catch (summaryError) {
+                console.error(`[Background] Error processing ${fileName}:`, summaryError.message);
+                
+                let position = 'Not Specified';
+                let summary = '';
+                
+                // Try to extract position separately if summary generation fails
+                try {
+                  const extractedText = await extractText(filePath, mimetype);
+                  if (extractedText && extractedText.trim().length > 50) {
+                    const { extractPositionFromCV } = require('../services/aiService');
+                    position = await extractPositionFromCV(extractedText);
+                  }
+                } catch (positionError) {
+                  console.error(`[Background] ${fileName}: Position extraction failed:`, positionError.message);
+                }
+                
+                // Set appropriate error message based on error type
+                if (summaryError.status === 503) {
+                  summary = 'Summary generation service unavailable. Please ensure Ollama is running.';
+                } else if (summaryError.status === 404) {
+                  summary = `Summary generation model not found. Error: ${summaryError.message}`;
+                } else if (summaryError.message.includes('extract text')) {
+                  summary = `Failed to extract text from file: ${summaryError.message}`;
+                } else {
+                  summary = `Summary generation failed: ${summaryError.message}. You can retry later.`;
+                }
+                
+                // Update CV record with error message
+                await CVBank.findByIdAndUpdate(cvId, {
+                  summary: summary,
+                  position: position,
+                });
+              }
+            })
+          );
+        }
+        
+        console.log(`[Background] Summary generation completed for ${cvsToProcess.length} CV(s)`);
       });
+    }
   } catch (error) {
     // Clean up uploaded files if database save fails
     let filesToCleanup = [];
